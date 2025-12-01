@@ -36,9 +36,12 @@ Setup
 ```bash
 GARMIN_USERNAME=your_email@example.com
 GARMIN_PASSWORD=your_password
+
+# Optional: Set default output directory
+GARMIN_OUTPUT_DIR=/path/to/your/export/directory
 ```
 
-2. Make sure `.env` is in your `.gitignore` to keep credentials secure
+2. Make sure `.env` is in your `.gitignore` to keep credentials secure (a `.env.example` file is provided as a template)
 
 Usage
 -----
@@ -54,7 +57,7 @@ python3 garmin_export.py [-h] [--username USERNAME] [--password PASSWORD]
 - `--password PASSWORD` - Garmin Connect password (or use `.env` file)
 - `-c COUNT, --count COUNT` - Number of recent activities to download (default: 10)
 - `-f {gpx,tcx,fit,json}, --format {gpx,tcx,fit,json}` - Export format (default: fit)
-- `-d DIRECTORY, --directory DIRECTORY` - Output directory (default: `/Users/aj/SynologyDrive/Cycling/Garmin`)
+- `-d DIRECTORY, --directory DIRECTORY` - Output directory (default: `GARMIN_OUTPUT_DIR` from `.env` or `./garmin_exports`)
 
 Examples
 --------
@@ -87,18 +90,17 @@ The script will:
 1. Authenticate with Garmin Connect
 2. Download the requested number of activities
 3. Save each activity with a date-prefixed filename (e.g., `2025-11-30_12345678.fit`)
-4. Save an activity summary as `activities_summary.json`
-5. For FIT format: Automatically extract files from ZIP archives
-6. Show progress and success count
+4. For FIT format: Automatically extract files from ZIP archives and clean up temporary ZIP files
+5. Show progress and success count
 
 **File naming:** Activities are saved as `YYYY-MM-DD_activityid.ext` making it easy to sort chronologically and identify specific workouts.
 
 Notes
 -----
 - **Credentials:** Store in `.env` file for security. Never commit credentials to version control.
+- **Output Directory:** Configure default output directory via `GARMIN_OUTPUT_DIR` in `.env` file to avoid hardcoding paths.
 - **Indoor Activities:** GPX files may be empty for indoor workouts (no GPS data). Use FIT or TCX for full workout metrics.
 - **FIT Files:** Contain the most complete data including power, heart rate, cadence, and other sensor data.
-- **Activity Summary:** All activity metadata is saved to `activities_summary.json` for parsing to other applications.
 
 Legacy Script
 -------------

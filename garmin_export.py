@@ -12,8 +12,6 @@ from datetime import datetime
 from pathlib import Path
 from garminconnect import Garmin, GarminConnectAuthenticationError, GarminConnectConnectionError
 
-DEFAULT_OUTPUT_DIR = '/Users/aj/SynologyDrive/Cycling/Garmin'
-
 def load_env():
     """Load environment variables from .env file if it exists"""
     env_file = Path(__file__).parent / '.env'
@@ -121,7 +119,7 @@ def main():
     parser.add_argument('-f', '--format', choices=['gpx', 'tcx', 'fit', 'json'],  
                         default='fit', help='Export format (default: fit)')
     parser.add_argument('-d', '--directory', 
-                        help=f'Output directory (default: {DEFAULT_OUTPUT_DIR})')
+                        help='Output directory (default: GARMIN_OUTPUT_DIR from .env or ./garmin_exports)')
     
     args = parser.parse_args()
     load_env()
@@ -135,7 +133,10 @@ def main():
         return 1
     
     # Set up output directory
-    output_dir = Path(args.directory) if args.directory else Path(DEFAULT_OUTPUT_DIR)
+    if args.directory:
+        output_dir = Path(args.directory)
+    else:
+        output_dir = Path(os.getenv('GARMIN_OUTPUT_DIR', './garmin_exports'))
     output_dir.mkdir(parents=True, exist_ok=True)
     print(f"Output directory: {output_dir}")
     
