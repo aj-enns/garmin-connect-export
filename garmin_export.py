@@ -110,6 +110,27 @@ def download_activity(client, activity, output_dir, format_type):
         print(f"  ✗ Error: {e}")
         return False
 
+def get_last_activity_date(output_dir, format_ext):
+    """Get the date of the most recent activity file in the output directory"""
+    try:
+        files = list(output_dir.glob(f'*{format_ext}'))
+        if not files:
+            return None
+        
+        # Extract dates from filenames (format: YYYY-MM-DD_activityid.ext)
+        dates = []
+        for file in files:
+            try:
+                date_str = file.name.split('_')[0]
+                date_obj = datetime.strptime(date_str, '%Y-%m-%d')
+                dates.append(date_obj)
+            except (ValueError, IndexError):
+                continue
+        
+        return max(dates) if dates else None
+    except Exception:
+        return None
+
 def main():
     parser = argparse.ArgumentParser(description='Export activities from Garmin Connect')
     parser.add_argument('--username', help='Garmin Connect username')
@@ -120,6 +141,8 @@ def main():
                         default='fit', help='Export format (default: fit)')
     parser.add_argument('-d', '--directory', 
                         help='Output directory (default: GARMIN_OUTPUT_DIR from .env or ./garmin_exports)')
+    parser.add_argument('--since-last', action='store_true',
+                        help='Only download activities newer than the most recent file in output directory')
     
     args = parser.parse_args()
     load_env()
@@ -140,6 +163,17 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
     print(f"Output directory: {output_dir}")
     
+    # Check for last activity date if --since-last is used
+    last_date = None
+    if args.since_last:
+        format_ext = f'.{args.format}'
+        last_date = get_last_activity_date(output_dir, format_ext)
+        if last_date:
+            print(f"Last activity date found: {last_date.strftime('%Y-%m-%d')}")
+            print(f"Will only download activities after this date")
+        else:
+            print("No existing activities found, downloading all requested activities")
+    
     try:
         # Initialize Garmin client
         print("Connecting to Garmin Connect...")
@@ -156,6 +190,20 @@ def main():
             return 0
         
         print(f"Found {len(activities)} activities\n")
+        
+        # Filter activities if --since-last is used
+        if last_date:
+            original_count = len(activities)
+            activities = [a for a in activities if datetime.strptime(
+                a.get('startTimeLocal', '1970-01-01 00:00:00'), 
+                '%Y-%m-%d %H:%M:%S'
+            ) > last_date]
+            filtered_count = original_count - len(activities)
+            if filtered_count > 0:
+                print(f"Filtered out {filtered_count} activities (already downloaded)\n")
+            if not activities:
+                print("No new activities to download")
+                return 0
         
         # Download each activity
         success_count = 0
