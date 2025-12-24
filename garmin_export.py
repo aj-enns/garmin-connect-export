@@ -10,6 +10,7 @@ import argparse
 import zipfile
 from datetime import datetime
 from pathlib import Path
+import importlib.metadata as importlib_metadata
 from garminconnect import Garmin, GarminConnectAuthenticationError, GarminConnectConnectionError
 
 def load_env():
@@ -31,28 +32,42 @@ def get_date_string(start_time):
     except:
         return 'unknown_date'
 
-def download_gpx(client, activity_id, output_dir, date_str):
+def sanitize_filename(name):
+    """Sanitize activity name for use in filename"""
+    # Remove or replace invalid characters
+    invalid_chars = '<>:"/\\|?*'
+    for char in invalid_chars:
+        name = name.replace(char, '-')
+    # Replace spaces with underscores
+    name = name.replace(' ', '_')
+    # Limit length
+    return name[:50] if name else 'Unnamed'
+
+def download_gpx(client, activity_id, output_dir, date_str, activity_name=''):
     """Download activity as GPX format"""
-    filename = output_dir / f'{date_str}_{activity_id}.gpx'
+    name_part = f'_{activity_name}' if activity_name else ''
+    filename = output_dir / f'{date_str}{name_part}_{activity_id}.gpx'
     data = client.download_activity(activity_id, dl_fmt=client.ActivityDownloadFormat.GPX)
     filename.write_bytes(data)
     return filename
 
-def download_tcx(client, activity_id, output_dir, date_str):
+def download_tcx(client, activity_id, output_dir, date_str, activity_name=''):
     """Download activity as TCX format"""
-    filename = output_dir / f'{date_str}_{activity_id}.tcx'
+    name_part = f'_{activity_name}' if activity_name else ''
+    filename = output_dir / f'{date_str}{name_part}_{activity_id}.tcx'
     data = client.download_activity(activity_id, dl_fmt=client.ActivityDownloadFormat.TCX)
     filename.write_text(data.decode('utf-8'))
     return filename
 
-def download_fit(client, activity_id, output_dir, date_str):
+def download_fit(client, activity_id, output_dir, date_str, activity_name=''):
     """Download and extract activity as FIT format"""
-    zip_filename = output_dir / f'{date_str}_{activity_id}.zip'
+    name_part = f'_{activity_name}' if activity_name else ''
+    zip_filename = output_dir / f'{date_str}{name_part}_{activity_id}.zip'
     data = client.download_activity(activity_id, dl_fmt=client.ActivityDownloadFormat.ORIGINAL)
     zip_filename.write_bytes(data)
     
     # Extract FIT file from ZIP and rename with date prefix
-    final_filename = output_dir / f'{date_str}_{activity_id}.fit'
+    final_filename = output_dir / f'{date_str}{name_part}_{activity_id}.fit'
     try:
         with zipfile.ZipFile(zip_filename, 'r') as zip_ref:
             extracted_files = zip_ref.namelist()
@@ -69,14 +84,15 @@ def download_fit(client, activity_id, output_dir, date_str):
     
     return final_filename
 
-def download_json(client, activity_id, output_dir, date_str):
+def download_json(client, activity_id, output_dir, date_str, activity_name=''):
     """Download activity details as JSON format"""
-    filename = output_dir / f'{date_str}_{activity_id}.json'
+    name_part = f'_{activity_name}' if activity_name else ''
+    filename = output_dir / f'{date_str}{name_part}_{activity_id}.json'
     details = client.get_activity_details(activity_id)
     filename.write_text(json.dumps(details, indent=2))
     
     # Also save full activity data
-    json_full = output_dir / f'{date_str}_{activity_id}_full.json'
+    json_full = output_dir / f'{date_str}{name_part}_{activity_id}_full.json'
     full_activity = client.get_activity(activity_id)
     json_full.write_text(json.dumps(full_activity, indent=2))
     
@@ -89,19 +105,20 @@ def download_activity(client, activity, output_dir, format_type):
     activity_type = activity.get('activityType', {}).get('typeKey', 'unknown')
     start_time = activity.get('startTimeLocal', 'unknown time')
     date_str = get_date_string(start_time)
+    safe_name = sanitize_filename(activity_name)
     
     print(f"{activity_name} ({activity_type}) - {start_time}")
     
     try:
         # Download based on format
         if format_type == 'gpx':
-            filename = download_gpx(client, activity_id, output_dir, date_str)
+            filename = download_gpx(client, activity_id, output_dir, date_str, safe_name)
         elif format_type == 'tcx':
-            filename = download_tcx(client, activity_id, output_dir, date_str)
+            filename = download_tcx(client, activity_id, output_dir, date_str, safe_name)
         elif format_type == 'fit':
-            filename = download_fit(client, activity_id, output_dir, date_str)
+            filename = download_fit(client, activity_id, output_dir, date_str, safe_name)
         elif format_type == 'json':
-            filename = download_json(client, activity_id, output_dir, date_str)
+            filename = download_json(client, activity_id, output_dir, date_str, safe_name)
         
         print(f"  ✓ Saved to {filename.name}")
         return True
@@ -135,24 +152,52 @@ def main():
     parser = argparse.ArgumentParser(description='Export activities from Garmin Connect')
     parser.add_argument('--username', help='Garmin Connect username')
     parser.add_argument('--password', help='Garmin Connect password')
+    parser.add_argument(
+        '--tokenstore',
+        help='Path to a tokenstore directory used by garminconnect to cache sessions (default: GARMIN_TOKENSTORE or ~/.garminconnect)',
+    )
     parser.add_argument('-c', '--count', type=int, default=10, 
                         help='Number of recent activities to download (default: 10)')
     parser.add_argument('-f', '--format', choices=['gpx', 'tcx', 'fit', 'json'],  
                         default='fit', help='Export format (default: fit)')
     parser.add_argument('-d', '--directory', 
                         help='Output directory (default: GARMIN_OUTPUT_DIR from .env or ./garmin_exports)')
-    parser.add_argument('--since-last', action='store_true',
-                        help='Only download activities newer than the most recent file in output directory')
+    parser.add_argument('--since-last', action='store_true', default=True,
+                        help='Only download activities newer than the most recent file (default: enabled)')
+    parser.add_argument('--all', action='store_true',
+                        help='Download all activities, ignoring existing files')
     
     args = parser.parse_args()
     load_env()
     
+    # If --all is specified, disable --since-last
+    if args.all:
+        args.since_last = False
+    
+    # Tokenstore (session cache directory)
+    default_tokenstore = Path('~/.garminconnect').expanduser()
+    tokenstore_path = Path(
+        args.tokenstore
+        or os.getenv('GARMIN_TOKENSTORE', str(default_tokenstore))
+    ).expanduser()
+    try:
+        tokenstore_path.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        # If we can't create the directory, we'll still try login without tokenstore later.
+        pass
+
     # Get credentials
     username = args.username or os.getenv('GARMIN_USERNAME')
     password = args.password or os.getenv('GARMIN_PASSWORD')
-    
-    if not username or not password:
-        print("Error: Username and password required (via --username/--password or .env file)")
+
+    if not username and not tokenstore_path.exists():
+        print("Error: Username required (via --username or GARMIN_USERNAME in .env)")
+        print(f"Tokenstore directory not found at: {tokenstore_path}")
+        return 1
+
+    if username and not password and not tokenstore_path.exists():
+        print("Error: Password required (via --password or GARMIN_PASSWORD in .env)")
+        print(f"Tokenstore directory not found at: {tokenstore_path}")
         return 1
     
     # Set up output directory
@@ -177,8 +222,29 @@ def main():
     try:
         # Initialize Garmin client
         print("Connecting to Garmin Connect...")
-        client = Garmin(username, password)
-        client.login()
+        def prompt_mfa() -> str:
+            return input('Enter Garmin MFA code: ').strip()
+
+        client = Garmin(username, password, prompt_mfa=prompt_mfa)
+        
+        # Check if we have existing tokens to use tokenstore
+        oauth1_token = tokenstore_path / 'oauth1_token.json'
+        oauth2_token = tokenstore_path / 'oauth2_token.json'
+        
+        if oauth1_token.exists() or oauth2_token.exists():
+            # Use cached tokens
+            client.login(tokenstore=str(tokenstore_path))
+        else:
+            # First login - don't pass tokenstore, let library create tokens fresh
+            client.login()
+            # After successful login, save tokens for next time
+            try:
+                # Re-login with tokenstore to save the session
+                client.login(tokenstore=str(tokenstore_path))
+            except Exception:
+                # If saving tokens fails, we're still authenticated, so continue
+                pass
+        
         print("✓ Successfully authenticated!")
         
         # Get activities
@@ -217,7 +283,16 @@ def main():
         
     except GarminConnectAuthenticationError as e:
         print(f"\n✗ Authentication failed: {e}")
-        print("Please check your username and password")
+        try:
+            gc_version = importlib_metadata.version('garminconnect')
+        except Exception:
+            gc_version = 'unknown'
+
+        print("Common fixes:")
+        print("- Confirm your Garmin username/password are still valid")
+        print("- If Garmin enabled MFA on your account, re-run and enter the code when prompted")
+        print(f"- Delete the tokenstore to force a fresh login: {tokenstore_path}")
+        print(f"- Upgrade garminconnect (you currently have {gc_version}): pip3 install --upgrade garminconnect")
         return 1
         
     except GarminConnectConnectionError as e:
